@@ -5,6 +5,8 @@ import pickle
 import time
 import warnings
 import concurrent.futures
+from dask import compute, delayed
+from distributed import Client
 
 class GA:
 
@@ -70,7 +72,7 @@ class GA:
         gene_type: The type of the gene. It is assigned to any of these types (int, float, numpy.int, numpy.int8, numpy.int16, numpy.int32, numpy.int64, numpy.uint, numpy.uint8, numpy.uint16, numpy.uint32, numpy.uint64, numpy.float, numpy.float16, numpy.float32, numpy.float64) and forces all the genes to be of that type.
 
         parent_selection_type: Type of parent selection.
-        keep_parents: If 0, this means no parent in the current population will be used in the next population. If -1, this means all parents in the current population will be used in the next population. If set to a value > 0, then the specified value refers to the number of parents in the current population to be used in the next population. Some parent selection operators such as rank selection, favor population diversity and therefore keeping the parents in the next generation can be beneficial. However, some other parent selection operators, such as roulette wheel selection (RWS), have higher selection pressure and keeping more than one parent in the next generation can seriously harm population diversity. Thanks to Prof. Fernando Jiménez Barrionuevo (http://webs.um.es/fernan) for editing this sentence.
+        keep_parents: If 0, this means no parent in the current population will be used in the next population. If -1, this means all parents in the current population will be used in the next population. If set to a value > 0, then the specified value refers to the number of parents in the current population to be used in the next population. For some parent selection operators like rank selection, the parents are of high quality and it is beneficial to keep them in the next generation. In some other parent selection operators like roulette wheel selection (RWS), it is not guranteed that the parents will be of high quality and thus keeping the parents might degarde the quality of the population.
         K_tournament: When the value of 'parent_selection_type' is 'tournament', the 'K_tournament' parameter specifies the number of solutions from which a parent is selected randomly.
 
         crossover_type: Type of the crossover opreator. If  crossover_type=None, then the crossover step is bypassed which means no crossover is applied and thus no offspring will be created in the next generations. The next generation will use the solutions in the current population.
@@ -875,6 +877,25 @@ class GA:
 
         if parallel_processing is None:
             self.parallel_processing = None
+            
+            
+            
+            
+            
+            
+            
+            
+        elif type(parallel_processing == Client):
+            self.parallel_processing = parallel_processing
+            
+            
+            
+            
+            
+            
+            
+            
+            
         elif type(parallel_processing) in GA.supported_int_types:
             if parallel_processing > 0:
                 self.parallel_processing = ["thread", parallel_processing]
@@ -1183,7 +1204,74 @@ class GA:
             raise Exception("ERROR calling the cal_pop_fitness() method: \nPlease check the parameters passed while creating an instance of the GA class.\n")
 
         pop_fitness = ["undefined"] * len(self.population)
-        if self.parallel_processing is None:
+
+
+
+
+
+
+
+
+
+
+
+
+        # If the user has passed in a distributed Client connection in the parallel_processing parameter, do the following
+        if type(self.parallel_processing == Client):
+            
+            # Store a list of delayed results, soon to be "computed" in a bit
+            delayed_results = []
+            
+            # Also store their solution indexes as I've had to separate the line "pop_fitness[sol_idx] = fitness" into two sections
+            delayed_solution_idxs = []
+            
+            # Loop through the solutions, most of this is default
+            for sol_idx, sol in enumerate(self.population):
+                if (self.save_solutions) and (list(sol) in self.solutions):
+                    fitness = self.solutions_fitness[self.solutions.index(list(sol))]
+                elif (self.last_generation_parents is not None) and len(numpy.where(numpy.all(self.last_generation_parents == sol, axis=1))[0] > 0):
+                    parent_idx = numpy.where(numpy.all(self.last_generation_parents == sol, axis=1))[0][0]
+                    parent_idx = self.last_generation_parents_indices[parent_idx]
+                    fitness = self.previous_generation_fitness[parent_idx]
+                    pop_fitness[sol_idx] = fitness # Here's one of the lines previously mentioned.
+                
+                # Here is the logic for setting up some delayed calculations, with their corresponding sol_idx
+                else:
+                    delayed_results.append(delayed(self.fitness_func)(sol, sol_idx))
+                    delayed_solution_idxs.append(sol_idx)
+                    
+                    # Took this check out for now while testing. Could reinstate it checking "if type(Delayed)""
+                    # if type(fitness) in GA.supported_int_float_types:
+                        # pass
+                    # else:
+                        # raise ValueError("The fitness function should return a number but the value {fit_val} of type {fit_type} found.".format(fit_val=fitness, fit_type=type(fitness)))
+
+            # Perform the fitness calculations by running the "compute" function, which sends
+            # the jobs to your Dask cluster
+            fitnesses = compute(*delayed_results)
+            
+            # Loop through the results, and add the results to the "pop_fitness" like before
+            for fitness, sol_idx in zip(fitnesses, delayed_solution_idxs):
+                pop_fitness[sol_idx] = fitness # Here's the second line previously mentioned when working with delayed compute
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+        elif self.parallel_processing is None:
             # Calculating the fitness value of each solution in the current population.
             for sol_idx, sol in enumerate(self.population):
     
